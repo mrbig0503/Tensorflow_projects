@@ -24,7 +24,7 @@ with tf.Session() as sess:
 	saver.save(sess, './my-model/my-model', global_step=10)
 
 	# Save model's computational graph to protobuf
-	tf.train.write_graph(tf.get_default_graph(), "./my-model/", "my-model.pb", as_text=True)
+	tf.train.write_graph(tf.get_default_graph(), "./my-model/", "my-model.pb", as_text=False)
 
 	# Note. use tf.import_graph_def to restore the protobuf file.
-	tf.saved_model.simple_save(sess, "./saved_model/", inputs={"a": a}, outputs={"y": y})
+	#tf.saved_model.simple_save(sess, "./saved_model/", inputs={"a": a}, outputs={"y": y})
