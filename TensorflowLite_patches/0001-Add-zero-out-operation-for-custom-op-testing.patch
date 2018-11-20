@@ -1,0 +1,214 @@
+From fcf6aa3a0e3185e6fc40dac5483269d95b952e00 Mon Sep 17 00:00:00 2001
+From: mrbig0503 <mrbig0503@gmail.com>
+Date: Fri, 2 Nov 2018 16:42:40 +0800
+Subject: [PATCH 1/1] Add zero out operation for custom op testing
+
+---
+ WORKSPACE                                   | 21 ++++++++
+ tensorflow/contrib/lite/kernels/BUILD       |  1 +
+ tensorflow/contrib/lite/kernels/register.cc |  2 +
+ tensorflow/contrib/lite/kernels/zero_out.cc | 57 +++++++++++++++++++++
+ tensorflow/core/user_ops/BUILD              | 12 +++++
+ tensorflow/core/user_ops/zero_out.cc        | 43 ++++++++++++++++
+ 6 files changed, 136 insertions(+)
+ create mode 100644 tensorflow/contrib/lite/kernels/zero_out.cc
+ create mode 100644 tensorflow/core/user_ops/BUILD
+ create mode 100644 tensorflow/core/user_ops/zero_out.cc
+
+diff --git a/WORKSPACE b/WORKSPACE
+index 17961829a6..3de31d4e4d 100644
+--- a/WORKSPACE
++++ b/WORKSPACE
+@@ -30,6 +30,27 @@ android_workspace()
+ # Please add all new TensorFlow dependencies in workspace.bzl.
+ tf_workspace()
+ 
++android_sdk_repository(
++    name = "androidsdk",
++    api_level = 23,
++    # Ensure that you have the build_tools_version below installed in the
++    # SDK manager as it updates periodically.
++    build_tools_version = "28.0.3",
++    # Replace with path to Android SDK on your system
++    path = "/home/jui/Android/Sdk",
++)
++
++android_ndk_repository(
++    name="androidndk",
++    path="/home/jui/Android/Sdk/ndk-bundle/android-ndk-r14b",
++    # This needs to be 14 or higher to compile TensorFlow.
++    # Please specify API level to >= 21 to build for 64-bit
++    # archtectures or the Android NDK will automatically select biggest
++    # API level that it supports without notice.
++    # Note that the NDK version is not the API level.
++    api_level=14
++)
++
+ new_http_archive(
+     name = "inception_v1",
+     build_file = "models.BUILD",
+diff --git a/tensorflow/contrib/lite/kernels/BUILD b/tensorflow/contrib/lite/kernels/BUILD
+index f20bb420a0..b029443d1f 100644
+--- a/tensorflow/contrib/lite/kernels/BUILD
++++ b/tensorflow/contrib/lite/kernels/BUILD
+@@ -225,6 +225,7 @@ cc_library(
+         "unidirectional_sequence_rnn.cc",
+         "unpack.cc",
+         "zeros_like.cc",
++	"zero_out.cc",
+     ],
+     hdrs = [
+     ],
+diff --git a/tensorflow/contrib/lite/kernels/register.cc b/tensorflow/contrib/lite/kernels/register.cc
+index 9402105fa7..5293c2f341 100644
+--- a/tensorflow/contrib/lite/kernels/register.cc
++++ b/tensorflow/contrib/lite/kernels/register.cc
+@@ -26,6 +26,7 @@ TfLiteRegistration* Register_LAYER_NORM_LSTM();
+ TfLiteRegistration* Register_MFCC();
+ TfLiteRegistration* Register_DETECTION_POSTPROCESS();
+ TfLiteRegistration* Register_RELU_1();
++TfLiteRegistration* Register_ZERO_OUT();
+ 
+ }  // namespace custom
+ 
+@@ -259,6 +260,7 @@ BuiltinOpResolver::BuiltinOpResolver() {
+   AddCustom("Relu1", tflite::ops::custom::Register_RELU_1());
+   AddCustom("TFLite_Detection_PostProcess",
+             tflite::ops::custom::Register_DETECTION_POSTPROCESS());
++  AddCustom("ZeroOut", tflite::ops::custom::Register_ZERO_OUT());
+ }
+ 
+ }  // namespace builtin
+diff --git a/tensorflow/contrib/lite/kernels/zero_out.cc b/tensorflow/contrib/lite/kernels/zero_out.cc
+new file mode 100644
+index 0000000000..959a95d00b
+--- /dev/null
++++ b/tensorflow/contrib/lite/kernels/zero_out.cc
+@@ -0,0 +1,57 @@
++#include "tensorflow/contrib/lite/c/builtin_op_data.h"
++#include "tensorflow/contrib/lite/c/c_api_internal.h"
++#include "tensorflow/contrib/lite/kernels/internal/reference/reference_ops.h"
++#include "tensorflow/contrib/lite/kernels/internal/tensor.h"
++#include "tensorflow/contrib/lite/kernels/kernel_util.h"
++#include "tensorflow/contrib/lite/kernels/op_macros.h"
++
++namespace tflite {
++namespace ops {
++namespace custom {
++
++TfLiteStatus Prepare(TfLiteContext* context, TfLiteNode* node) {
++	using namespace tflite;
++	TF_LITE_ENSURE_EQ(context, NumInputs(node), 1);
++	TF_LITE_ENSURE_EQ(context, NumOutputs(node), 1);
++
++	const TfLiteTensor* input = GetInput(context, node, 0);
++	TfLiteTensor* output = GetOutput(context, node, 0);
++
++	int num_dims = NumDimensions(input);
++
++	TfLiteIntArray* output_size = TfLiteIntArrayCreate(num_dims);
++	for (int i = 0; i < num_dims; ++i) {
++		output_size->data[i] = input->dims->data[i];
++	}
++
++	return context->ResizeTensor(context, output, output_size);
++}
++
++TfLiteStatus Eval(TfLiteContext* context, TfLiteNode* node) {
++	using namespace tflite;
++	const TfLiteTensor* input = GetInput(context, node, 0);
++	TfLiteTensor* output = GetOutput(context, node, 0);
++
++	float* input_data = input->data.f;
++	float* output_data = output->data.f;
++
++	size_t count = 1;
++	int num_dims = NumDimensions(input);
++	for (int i = 0; i < num_dims; ++i) {
++		count *= input->dims->data[i];
++	}
++
++	for (size_t i = 1; i < count; ++i) {
++		output_data[i] = 0;
++	}
++	return kTfLiteOk;
++}
++
++TfLiteRegistration* Register_ZERO_OUT() {
++	static TfLiteRegistration r = {nullptr, nullptr, Prepare, Eval};
++	return &r;
++}
++
++}
++}
++}
+diff --git a/tensorflow/core/user_ops/BUILD b/tensorflow/core/user_ops/BUILD
+new file mode 100644
+index 0000000000..32cd8f6020
+--- /dev/null
++++ b/tensorflow/core/user_ops/BUILD
+@@ -0,0 +1,12 @@
++load("//tensorflow:tensorflow.bzl", "tf_custom_op_library")
++
++tf_custom_op_library(
++    name = "fact.so",
++    srcs = ["fact.cc"],
++)
++
++tf_custom_op_library(
++    name = "zero_out.so",
++    srcs = ["zero_out.cc"],
++)
++
+diff --git a/tensorflow/core/user_ops/zero_out.cc b/tensorflow/core/user_ops/zero_out.cc
+new file mode 100644
+index 0000000000..b410ebe445
+--- /dev/null
++++ b/tensorflow/core/user_ops/zero_out.cc
+@@ -0,0 +1,43 @@
++#include "tensorflow/core/framework/op.h"
++#include "tensorflow/core/framework/shape_inference.h"
++#include "tensorflow/core/framework/op_kernel.h"
++
++using namespace tensorflow;
++
++REGISTER_OP("ZeroOut")
++    .Input("to_zero: int32")
++    .Output("zeroed: int32")
++    .SetShapeFn([](::tensorflow::shape_inference::InferenceContext* c) {
++      c->set_output(0, c->input(0));
++      return Status::OK();
++    });
++
++
++class ZeroOutOp : public OpKernel {
++ public:
++  explicit ZeroOutOp(OpKernelConstruction* context) : OpKernel(context) {}
++
++  void Compute(OpKernelContext* context) override {
++    // Grab the input tensor
++    const Tensor& input_tensor = context->input(0);
++    auto input = input_tensor.flat<int32>();
++
++    // Create an output tensor
++    Tensor* output_tensor = NULL;
++    OP_REQUIRES_OK(context, context->allocate_output(0, input_tensor.shape(),
++                                                     &output_tensor));
++    auto output_flat = output_tensor->flat<int32>();
++
++    // Set all but the first element of the output tensor to 0.
++    const int N = input.size();
++    for (int i = 1; i < N; i++) {
++      output_flat(i) = 0;
++    }
++
++    // Preserve the first input value if possible.
++    if (N > 0) output_flat(0) = input(0);
++  }
++};
++
++REGISTER_KERNEL_BUILDER(Name("ZeroOut").Device(DEVICE_CPU), ZeroOutOp);
++
+-- 
+2.17.1
+
